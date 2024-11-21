@@ -2,13 +2,10 @@ ARG WORDPRESS_VERSION=latest
 ARG PHP_VERSION=8.3
 ARG USER=www-data
 
-
-
-FROM dunglas/frankenphp:latest-builder-php${PHP_VERSION} as builder
+FROM dunglas/frankenphp:builder-php${PHP_VERSION}-alpine as builder
 
 # Copy xcaddy in the builder image
-COPY --from=caddy:builder /usr/bin/xcaddy /usr/bin/xcaddy
-
+COPY --from=caddy:builder-alpine /usr/bin/xcaddy /usr/bin/xcaddy
 
 # CGO must be enabled to build FrankenPHP
 ENV CGO_ENABLED=1 XCADDY_SETCAP=1 XCADDY_GO_BUILD_FLAGS='-ldflags="-w -s" -trimpath'
@@ -23,9 +20,8 @@ RUN xcaddy build \
     # Add extra Caddy modules here
     --with github.com/stephenmiracle/frankenwp/sidekick/middleware/cache=./cache
 
-
 FROM wordpress:$WORDPRESS_VERSION as wp
-FROM dunglas/frankenphp:latest-php${PHP_VERSION} AS base
+FROM dunglas/frankenphp:php${PHP_VERSION}-alpine as base
 
 LABEL org.opencontainers.image.title=FrankenWP
 LABEL org.opencontainers.image.description="Optimized WordPress containers to run everywhere. Built with FrankenPHP & Caddy."
@@ -34,31 +30,29 @@ LABEL org.opencontainers.image.source=https://github.com/StephenMiracle/frankenw
 LABEL org.opencontainers.image.licenses=MIT
 LABEL org.opencontainers.image.vendor="Stephen Miracle"
 
-
 # Replace the official binary by the one contained your custom modules
 COPY --from=builder /usr/local/bin/frankenphp /usr/local/bin/frankenphp
 ENV WP_DEBUG=${DEBUG:+1}
 ENV FORCE_HTTPS=0
 ENV PHP_INI_SCAN_DIR=$PHP_INI_DIR/conf.d
 
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk update && \
+    apk add --no-cache \
     ca-certificates \
     ghostscript \
     curl \
-    libonig-dev \
+    oniguruma-dev \
     libxml2-dev \
-    libcurl4-openssl-dev \
-    libssl-dev \
+    curl-dev \
+    openssl-dev \
     libzip-dev \
     unzip \
     git \
-    libjpeg-dev \
+    jpeg-dev \
     libwebp-dev \
-    libzip-dev \
     libmemcached-dev \
-    zlib1g-dev
-
+    zlib-dev && \
+    rm -rf /var/cache/apk/*
 
 # install the PHP extensions we need (https://make.wordpress.org/hosting/handbook/handbook/server-environment/#php-extensions)
 RUN install-php-extensions \
@@ -105,16 +99,12 @@ RUN { \
     echo 'html_errors = Off'; \
     } > $PHP_INI_DIR/conf.d/error-logging.ini
 
-
 WORKDIR /var/www/html
 
 VOLUME /var/www/html/wp-content
 
-
 COPY wp-content/mu-plugins /var/www/html/wp-content/mu-plugins
 RUN mkdir /var/www/html/wp-content/cache
-
-
 
 RUN sed -i \
     -e 's/\[ "$1" = '\''php-fpm'\'' \]/\[\[ "$1" == frankenphp* \]\]/g' \
@@ -133,16 +123,21 @@ RUN curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli
 
 COPY Caddyfile /etc/caddy/Caddyfile
 
-# Caddy requires an additional capability to bind to port 80 and 443
-RUN useradd -D ${USER} && \
-    setcap CAP_NET_BIND_SERVICE=+eip /usr/local/bin/frankenphp
+# # Caddy requires an additional capability to bind to port 80 and 443
+RUN setcap CAP_NET_BIND_SERVICE=+eip /usr/local/bin/frankenphp
+
 
 # Caddy requires write access to /data/caddy and /config/caddy
-RUN chown -R ${USER}:${USER} /data/caddy && \
-    chown -R ${USER}:${USER} /config/caddy && \
-    chown -R ${USER}:${USER} /var/www/html && \
-    chown -R ${USER}:${USER} /usr/src/wordpress && \
-    chown -R ${USER}:${USER} /usr/local/bin/docker-entrypoint.sh
+# # RUN addgroup ${USER}
+# RUN id ${USER}
+# RUN id ${USER}
+#  uid=0(root) gid=0(root) groups=0(root),1(bin),2(daemon),3(sys),4(adm),6(disk),10(wheel),11(floppy),20(dialout),26(tape),27(video)
+
+RUN chown -R ${USER}:root /data/caddy && \
+    chown -R ${USER}:root /config/caddy && \
+    chown -R ${USER}:root /var/www/html && \
+    chown -R ${USER}:root /usr/src/wordpress && \
+    chown -R ${USER}:root /usr/local/bin/docker-entrypoint.sh
 
 USER $USER
 
